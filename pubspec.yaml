@@ -1,6 +1,7 @@
 name: libcrypto
-description: A starting point for Dart libraries or applications.
+description: Cryptography utility library
 version: 0.1.0
+repository: https://github.com/BytePass/libcrypto-dart
 # homepage: https://www.example.com
 
 environment:
