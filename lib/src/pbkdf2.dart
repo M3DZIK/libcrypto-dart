@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:isolate';
 import 'dart:typed_data';
 
 import 'package:hex/hex.dart';
@@ -37,31 +38,28 @@ class Pbkdf2 {
     // initialize the hasher
     hasher.init(Pbkdf2Parameters(salt, iterations, length));
 
-    // // open a receive port
-    // ReceivePort receivePort = ReceivePort();
+    // open a receive port
+    ReceivePort receivePort = ReceivePort();
 
-    // // process hash in an isolate task
-    // await Isolate.spawn(
-    //   (SendPort sendPort) {
-    //     final hash = hasher.process(Uint8List.fromList(utf8.encode(data)));
+    // process hash in an isolate task
+    await Isolate.spawn(
+      (SendPort sendPort) {
+        // compute the hash
+        final hash = hasher.process(Uint8List.fromList(utf8.encode(data)));
 
-    //     final hashHex = HEX.encode(hash);
+        // encode the hash into a hex string
+        final hexHash = HEX.encode(hash);
 
-    //     sendPort.send(hashHex);
-    //   },
-    //   receivePort.sendPort,
-    // );
+        // send the hash to the isolate send port
+        sendPort.send(hexHash);
+      },
+      receivePort.sendPort,
+    );
 
-    // // get the hash from isolate task
-    // final hash = await receivePort.first;
-
-    // compute a hash of the data
-    final hash = hasher.process(Uint8List.fromList(utf8.encode(data)));
-
-    // encode the hash to a hex
-    final hashHex = HEX.encode(hash);
+    // get the hash from the isolate task
+    final hash = await receivePort.first;
 
     // returns the hash
-    return hashHex;
+    return hash;
   }
 }

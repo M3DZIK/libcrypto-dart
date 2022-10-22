@@ -1,196 +1,125 @@
-// import 'dart:convert';
-// import 'dart:isolate';
-
-// import 'package:cryptography/cryptography.dart' as cryptography;
-// import 'package:hex/hex.dart';
-
-// class AesCbc {
-//   AesCbc();
-
-//   //. Encrypt the clear text using AES-CBC 256 bits with HMAC-SHA256 authentication.
-//   Future<String> encrypt(
-//     String clearText, {
-//     required String secretKey,
-//     required List<int> nonce,
-//   }) async {
-//     // create a receive port
-//     final receivePort = ReceivePort();
-
-//     // create a new Isolate task
-//     await Isolate.spawn(
-//       _AesCbc.encrypt,
-//       _EncryptArguments(
-//         secretKey: secretKey,
-//         nonce: nonce,
-//         clearText: clearText,
-//         sendPort: receivePort.sendPort,
-//       ),
-//     );
-
-//     // wait for the secret box
-//     final cryptography.SecretBox secretBox = await receivePort.first;
-
-//     // close the receive port
-//     receivePort.close();
-
-//     // extract cipher text from the secret box
-//     final cipherText = secretBox.cipherText;
-//     // encode the cipher text as hex string
-//     final cipherTextHex = HEX.encode(cipherText);
-
-//     // return the cipher text
-//     return cipherTextHex;
-//   }
-// }
-
-// class _EncryptArguments {
-//   String secretKey;
-//   List<int> nonce;
-//   String clearText;
-//   SendPort sendPort;
-
-//   _EncryptArguments({
-//     required this.secretKey,
-//     required this.nonce,
-//     required this.clearText,
-//     required this.sendPort,
-//   });
-// }
-
-// class _DecryptArguments {
-//   String secretKey;
-//   List<int> nonce;
-//   String cipher;
-//   SendPort sendPort;
-
-//   _DecryptArguments({
-//     required this.secretKey,
-//     required this.nonce,
-//     required this.cipher,
-//     required this.sendPort,
-//   });
-// }
-
-// class _AesCbc {
-//   /// Initialize the AES-CBC with 256 bit key and HMAC-SHA256 authentication.
-//   static final aes =
-//       cryptography.AesCbc.with256bits(macAlgorithm: cryptography.Hmac.sha256());
-
-//   static Future<void> encrypt(_EncryptArguments args) async {
-//     // convert clear text to bytes
-//     final clearTextBytes = utf8.encode(args.clearText);
-
-//     // decode the secret key
-//     final secretKey = cryptography.SecretKey(HEX.decode(args.secretKey));
-
-//     // encrypt the clear text
-//     final secretBox = await aes.encrypt(
-//       clearTextBytes,
-//       secretKey: secretKey,
-//       nonce: args.nonce,
-//     );
-
-//     // send the secret box to the Isolate task port
-//     args.sendPort.send(secretBox);
-//   }
-
-//   static Future<void> decrypt(_DecryptArguments args) async {
-//     // decode cipher hex string
-//     final cipherBytes = HEX.decode(args.cipher);
-
-//     // decode the secret key
-//     final secretKey = cryptography.SecretKey(HEX.decode(args.secretKey));
-
-//     // encrypt the clear text
-//     final secretBox = await aes.decrypt(
-//       clearTextBytes,
-//       secretKey: secretKey,
-//       nonce: args.nonce,
-//     );
-
-//     // send the secret box to the Isolate task port
-//     args.sendPort.send(secretBox);
-//   }
-// }
-
 import 'dart:convert';
-import 'dart:math';
+import 'dart:isolate';
 import 'dart:typed_data';
 
 import 'package:hex/hex.dart';
+import 'package:libcrypto/src/salt.dart';
 import 'package:pointycastle/export.dart';
 
 class AesCbc {
   AesCbc();
 
+  /// Encrypt the clear text using AES-CBC.
+  ///
+  /// Key must be 256-bit (32 bytes) long.
   Future<String> encrypt(
     String clearText, {
     required String secretKey,
   }) async {
-    final clearTextBytes = Uint8List.fromList(utf8.encode(clearText));
+    // encode the secret key to a bytes array
     final key = Uint8List.fromList(HEX.decode(secretKey));
 
+    // key must be 256-bit (32 bytes) long
     if (key.length != 32) {
       throw Exception('Secret key must be 32 bytes long');
     }
 
-    var iv = Uint8List(16);
-    var random = Random.secure();
-    for (int i = 0; i < 16; i++) {
-      iv[i] = random.nextInt(256);
-    }
+    // generate a random initialization vector
+    var iv = Salt(16).generate();
 
-    var cipher = PaddedBlockCipherImpl(
-      PKCS7Padding(),
-      CBCBlockCipher(AESEngine()),
+    // encode the clear text as a byte slice
+    final clearTextBytes = Uint8List.fromList(utf8.encode(clearText));
+
+    // encrypt the clear text
+    final cipherTextBytes = await _process(
+      forEncryption: true,
+      key: key,
+      iv: iv,
+      data: clearTextBytes,
     );
 
-    cipher.init(
-      true /*encrypt*/,
-      PaddedBlockCipherParameters<CipherParameters, CipherParameters>(
-        ParametersWithIV<KeyParameter>(KeyParameter(key), iv),
-        null,
-      ),
-    );
-
-    final cipherTextBytes = cipher.process(clearTextBytes);
-
+    // encode the cipher text as a hex string
     final cipherTextHex = HEX.encode(iv + cipherTextBytes);
 
+    // returns the cipher text
     return cipherTextHex;
   }
 
+  /// Decrypt the cipher text using AES-CBC.
+  ///
+  /// Cipher text schema: [iv (16 bytes long) + cipher text] in a hex string
   Future<String> decrypt(
     String cipherText, {
     required String secretKey,
   }) async {
-    var cipherTextBytes = Uint8List.fromList(HEX.decode(cipherText));
+    // encode the secret key to a bytes array
     final key = Uint8List.fromList(HEX.decode(secretKey));
 
+    // key must be 256-bit (32 bytes) long
     if (key.length != 32) {
       throw Exception('Secret key must be 32 bytes long');
     }
 
+    // encode the cipher text from hex string to bytes slice
+    var cipherTextBytes = Uint8List.fromList(HEX.decode(cipherText));
+
+    // get initialization vector from the cipher text
     final iv = cipherTextBytes.sublist(0, 16);
+    // remove initialization vector from the cipher text
     cipherTextBytes = cipherTextBytes.sublist(16, cipherTextBytes.length);
 
-    var cipher = PaddedBlockCipherImpl(
-      PKCS7Padding(),
-      CBCBlockCipher(AESEngine()),
+    // decrypt the cipher text
+    final clearTextBytes = await _process(
+      forEncryption: false,
+      key: key,
+      iv: iv,
+      data: cipherTextBytes,
     );
 
+    // encode the clear text to a string
+    final clearText = utf8.decode(clearTextBytes);
+
+    // returns the clear ext
+    return clearText;
+  }
+
+  Future<Uint8List> _process({
+    required bool forEncryption,
+    required Uint8List key,
+    required Uint8List iv,
+    required Uint8List data,
+  }) async {
+    // create the padded block cipher
+    var cipher = PaddedBlockCipher('AES/CBC/PKCS7');
+
+    // initialize the cipher
     cipher.init(
-      false /*decrypt*/,
+      forEncryption,
       PaddedBlockCipherParameters<CipherParameters, CipherParameters>(
         ParametersWithIV<KeyParameter>(KeyParameter(key), iv),
         null,
       ),
     );
 
-    final clearTextBytes = cipher.process(cipherTextBytes);
+    // open a receive port
+    ReceivePort receivePort = ReceivePort();
 
-    final clearText = utf8.decode(clearTextBytes);
+    // process hash in an isolate task
+    await Isolate.spawn(
+      (SendPort sendPort) {
+        // process a whole block of data
+        final output = cipher.process(data);
 
-    return clearText;
+        // send output to the isolate send port
+        sendPort.send(output);
+      },
+      receivePort.sendPort,
+    );
+
+    // get the hash from the isolate task
+    final output = await receivePort.first;
+
+    // returns the output
+    return output;
   }
 }
