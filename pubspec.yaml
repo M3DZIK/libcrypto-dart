@@ -1,6 +1,6 @@
 name: libcrypto
 description: Cryptography utility library for AES encryption and Pbkdf2 hashing algorithms.
-version: 0.1.0
+version: 0.2.0
 repository: https://github.com/BytePass/libcrypto-dart
 # homepage: https://www.example.com
 
