@@ -1,120 +1,67 @@
 import 'dart:convert';
-import 'dart:isolate';
+import 'dart:typed_data';
 
-import 'package:cryptography/cryptography.dart' as cryptography;
 import 'package:hex/hex.dart';
+import 'package:pointycastle/pointycastle.dart';
 
 class Pbkdf2 {
-  /// Number of PBKDF2 iterations
+  /// Number of PBKDF2 iterations.
   int iterations;
 
   Pbkdf2({
-    this.iterations = 100000,
-  });
-
-  /// Compute PBKDF2-SHA256 hash of the secret.
-  Future<String> sha256(
-    String secret, {
-    required List<int> nonce,
-  }) {
-    return _runIsolated(
-      secret,
-      nonce: nonce,
-      hmac: cryptography.Hmac.sha256(),
-      bits: 256,
-    );
-  }
-
-  /// Compute PBKDF2-SHA512 hash of the secret.
-  Future<String> sha512(
-    String secret, {
-    required List<int> nonce,
-  }) {
-    return _runIsolated(
-      secret,
-      nonce: nonce,
-      hmac: cryptography.Hmac.sha512(),
-      bits: 512,
-    );
-  }
-
-  Future<String> _runIsolated(
-    String secret, {
-    required List<int> nonce,
-    required cryptography.Hmac hmac,
-    required int bits,
-  }) async {
-    // open a receive port
-    ReceivePort receivePort = ReceivePort();
-
-    // compute hash in isolate task
-    await Isolate.spawn(
-      _Pbkdf2.hash,
-      _Arguments(
-        secret: utf8.encode(secret),
-        nonce: nonce,
-        sendPort: receivePort.sendPort,
-        iterations: iterations,
-        algo: hmac,
-        bits: bits,
-      ),
-    );
-
-    // wait for the secret key
-    final secretKey = await receivePort.first;
-
-    // close the receive port
-    receivePort.close();
-
-    // return the secret key
-    return secretKey;
-  }
-}
-
-class _Arguments {
-  List<int> secret;
-  List<int> nonce;
-  SendPort sendPort;
-  int iterations;
-  cryptography.Hmac algo;
-  int bits;
-
-  _Arguments({
-    required this.secret,
-    required this.nonce,
-    required this.sendPort,
     required this.iterations,
-    required this.algo,
-    required this.bits,
   });
-}
 
-class _Pbkdf2 {
-  /// Compute PBKDF2-SHA512 hash of the master password.
-  static Future<void> hash(_Arguments args) async {
-    // initialize the Pbkdf2 hasher
-    final pbkdf2 = cryptography.Pbkdf2(
-      macAlgorithm: args.algo,
-      iterations: args.iterations,
-      bits: args.bits,
-    );
+  /// Compute a SHA-256/HMAC/PBKDF2 hash of the secret data.
+  Future<String> sha256(String data, Uint8List salt) async {
+    // initialize the key derivator
+    final hasher = KeyDerivator('SHA-256/HMAC/PBKDF2');
 
-    // construct a secret key
-    final secretKey = cryptography.SecretKey(args.secret);
+    return _compute(data, salt: salt, hasher: hasher, length: 32);
+  }
 
-    // compute a new secret key from a secret key and a nonce
-    final newSecretKey = await pbkdf2.deriveKey(
-      secretKey: secretKey,
-      nonce: args.nonce,
-    );
+  /// Compute a SHA-512/HMAC/PBKDF2 hash of the secret data.
+  Future<String> sha512(String data, Uint8List salt) async {
+    // initialize the key derivator
+    final hasher = KeyDerivator('SHA-512/HMAC/PBKDF2');
 
-    // extract bytes from the secret key
-    final newSecretKeyBytes = await newSecretKey.extractBytes();
+    return _compute(data, salt: salt, hasher: hasher, length: 64);
+  }
 
-    // convert bytes to hex string
-    final newSecretKeyHex = HEX.encode(newSecretKeyBytes);
+  Future<String> _compute(
+    String data, {
+    required Uint8List salt,
+    required KeyDerivator hasher,
+    required int length,
+  }) async {
+    // initialize the hasher
+    hasher.init(Pbkdf2Parameters(salt, iterations, length));
 
-    // send the hex string to isolate port
-    args.sendPort.send(newSecretKeyHex);
+    // // open a receive port
+    // ReceivePort receivePort = ReceivePort();
+
+    // // process hash in an isolate task
+    // await Isolate.spawn(
+    //   (SendPort sendPort) {
+    //     final hash = hasher.process(Uint8List.fromList(utf8.encode(data)));
+
+    //     final hashHex = HEX.encode(hash);
+
+    //     sendPort.send(hashHex);
+    //   },
+    //   receivePort.sendPort,
+    // );
+
+    // // get the hash from isolate task
+    // final hash = await receivePort.first;
+
+    // compute a hash of the data
+    final hash = hasher.process(Uint8List.fromList(utf8.encode(data)));
+
+    // encode the hash to a hex
+    final hashHex = HEX.encode(hash);
+
+    // returns the hash
+    return hashHex;
   }
 }
