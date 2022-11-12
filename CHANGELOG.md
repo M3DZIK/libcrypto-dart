@@ -1,6 +1,11 @@
+## 0.2.2
+
+### Fixes
+- AES: Handle errors in Isolate tasks
+
 ## 0.2.1
 
-### Fixed
+### Fixes
 - Run Pbkdf2 and AES-CBC in Isolate task
 
 ### Changes
