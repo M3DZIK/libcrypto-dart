@@ -108,16 +108,23 @@ class AesCbc {
     await Isolate.spawn(
       (SendPort sendPort) {
         // process a whole block of data
-        final output = cipher.process(data);
+        try {
+          final output = cipher.process(data);
 
-        // send output to the isolate send port
-        sendPort.send(output);
+          sendPort.send(output);
+        } catch (err) {
+          sendPort.send(err.toString());
+        }
       },
       receivePort.sendPort,
     );
 
     // get the hash from the isolate task
     final output = await receivePort.first;
+
+    if (output is String) {
+      throw Exception(output);
+    }
 
     // returns the output
     return output;
